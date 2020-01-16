@@ -64,7 +64,7 @@ gitalk:
   enable: true    #是否开启Gitalk评论
   clientID: 9dbe3d017047a1c275e9                            #生成的clientID
   clientSecret: b769554ac16942ff38a5683b5763011b63c8e0b3    #生成的clientSecret
-  repo: catmai.comment    #仓库名称
+  repo: catmaiv.github.io    #仓库名称
   owner: CatMaiV    #github用户名
   admin: CatMaiV
   distractionFreeMode: true #是否启用类似FB的阴影遮罩
