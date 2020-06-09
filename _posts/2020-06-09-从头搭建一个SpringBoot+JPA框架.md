@@ -1,9 +1,9 @@
 ---
-layout:     post
-title:      从头搭建一个SpringBoot+JPA框架
-subtitle:  从头搭建一个SpringBoot+JPA框架
-date:       2020-06-09
-author:     catmai
+layout: post
+title: 从头搭建一个SpringBoot+JPA框架
+subtitle: 从头搭建一个SpringBoot+JPA框架
+date: 2020-06-09
+author: catmai
 header-img: img/post-bg-re-vs-ng2.jpg
 catalog: true
 tags:
