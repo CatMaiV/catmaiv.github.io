@@ -1,4 +1,4 @@
----
+--- 
 layout: post
 title: 从头搭建一个SpringBoot+JPA框架
 subtitle: 从头搭建一个SpringBoot+JPA框架
@@ -9,8 +9,8 @@ catalog: true
 tags:
     - Java
     - SpringBoot
-    -JPA
-    -Thymeleaf
+    - JPA
+    - Thymeleaf
 ---
 
 
