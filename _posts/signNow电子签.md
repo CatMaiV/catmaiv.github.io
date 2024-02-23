@@ -1,0 +1,873 @@
+---
+layout:     post
+title:      SignNow电子签
+subtitle:   SignNow电子签api使用
+date:       2024-02-23
+author:     catmai
+header-img: img/post-bg-re-vs-ng2.jpg
+catalog: true
+tags:
+    - Java
+    - SignNow
+---
+
+
+
+SignNow是国外的电子签平台，中文的博客非常少，在此记录一下。
+
+官方API文档传送门：
+
+``` ht
+https://docs.signnow.com/docs/signnow/get-started
+```
+
+ps全是生肉
+
+# 1.创建账号、创建application
+
+直接去平台创建账号、创建一个application。可以现在沙箱环境创建，因为正式环境签合同是收费的，包含了真实身份验证等，沙箱环境可以随意测试。
+
+可以看API文档进行创建，上面写得很详细。
+
+
+
+# 2.如何使用
+
+总体分为以下几个步骤：
+
+1.上传合同模板（Template），设置签名角色
+
+2.应用程序获取模板，通过模板创建文档（Document），回填合同模板内需要的内容（可选项）
+
+3.应用程序发送签约邀请邮件
+
+4.应用程序创建签约完成事件（Event）
+
+5.事件发起回调
+
+6.应用程序标记业务签约完成，删除事件
+
+
+
+## 上传合同模板
+
+这一步可以在平台内完成，上传template（请注意不是document）
+
+并按需设置template的签约角色（甲方、乙方）、签约位置和填充的字段。这个步骤在平台内很明显，可以自行摸索。
+
+![image-20240223161007745](C:\Users\CatMa\AppData\Roaming\Typora\typora-user-images\image-20240223161007745.png)
+
+
+
+## 应用程序获取模板
+
+应用程序端需要在项目启动前初始化signNow的各项内容，创建signNow客户端。
+
+
+
+SNClientBuilder:
+
+``` java
+public class SNClientBuilder {
+
+    private String apiUrl;
+    private String clientId;
+    private String clientSecret;
+    private String basicAuthHeader;
+    private Client basicClient;
+    private WebTarget snApiUrl;
+    private static volatile SNClientBuilder instance;
+    protected final static Variant defaultVariant = new Variant(
+            MediaType.APPLICATION_JSON_TYPE,
+            Locale.getDefault(),
+            StandardCharsets.UTF_8.name()
+    );
+
+    public static SNClientBuilder get() throws SNException {
+        SNClientBuilder localInstance = instance;
+        if (localInstance == null) {
+            throw new SNException("SNClientBuilder must be initialized with API connection prerequisites") {};
+        }
+        return localInstance;
+    }
+
+    /**
+     * SNClientBuilder singleton initializer
+     *
+     * @param apiUrl
+     * @param clientId
+     * @param clientSecret
+     * @return
+     */
+    public static SNClientBuilder get(String apiUrl, String clientId, String clientSecret) {
+        SNClientBuilder localInstance = instance;
+        if (localInstance == null) {
+            synchronized (SNClientBuilder.class) {
+                localInstance = instance;
+                if (localInstance == null) {
+                    instance = localInstance = new SNClientBuilder(apiUrl, clientId, clientSecret);
+                }
+            }
+        }
+        return localInstance;
+    }
+
+    private SNClientBuilder(String apiUrl, String clientId, String clientSecret) {
+        this.apiUrl = apiUrl;
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+        this.basicAuthHeader = "Basic "+encodeClientCredentials(clientId, clientSecret);
+        basicClient = ClientBuilder.newClient().register(MultiPartFeature.class);
+        snApiUrl = basicClient.target(apiUrl);
+    }
+
+    private String encodeClientCredentials(String client, String secret){
+        return Base64.getEncoder().encodeToString((client + ":" + secret).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Produces new API client instance for SignNow user
+     * @param email
+     * @param password
+     * @return
+     * @throws SNAuthException
+     */
+    public SNClient getClientForExistingUser(String email, String password) throws SNAuthException {
+        User user = null;
+        try {
+            Form authForm = new Form();
+            authForm.param("grant_type", "password")
+                    .param("username", email)
+                    .param("password", password)
+                    .param("scope", "*");
+            Response response = getOAuthRequest(authForm);
+//            User.UserAuthResponce authData = response.readEntity(User.UserAuthResponce.class);
+            Map<String,String> loginData = response.readEntity(Map.class);
+            user = new User(email, loginData.get("access_token"), loginData.get("refresh_token"));
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new SNAuthException(e.getMessage(), e);
+        }
+        return new SNClient(
+                snApiUrl,
+                user
+        );
+    }
+
+    protected void refreshToken(User user) throws SNException {
+        try {
+            Form authForm = new Form();
+            authForm.param("grant_type", "refresh_token")
+                    .param("refresh_token", user.getRefreshToken())
+                    .param("scope", "*");
+            Response response = getOAuthRequest(authForm);
+            User.UserAuthResponce auth = response.readEntity(User.UserAuthResponce.class);
+            user.setToken(auth.token);
+            user.setRefreshToken(auth.refreshToken);
+        } catch (Exception e) {
+            throw new SNException(e.getMessage(), e) {};
+        }
+    }
+
+    private Response getOAuthRequest(Form authForm) throws SNAuthException {
+        Response response = snApiUrl.path("/oauth2/token")
+                .request(MediaType.APPLICATION_JSON_TYPE)
+                .header(Constants.AUTHORIZATION, basicAuthHeader)
+                .post(Entity.entity(authForm, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
+        if (response.getStatus() >= 500) {
+            throw new SNAuthException(response.readEntity(Errors.class).errors.stream()
+                    .map(err -> err.code + ": " + err.message)
+                    .collect(Collectors.joining("\n")));
+        } else if (response.getStatus() >= 400) {
+            throw new SNAuthException(response.getStatus() + ": " + response.readEntity(AuthError.class).error);
+        }
+        return response;
+    }
+
+    /**
+     * Get new API client instance for already authenticated user. Argument object can be obtained from {@link SNClient#getUser()}
+     *
+     * @param user
+     * @return
+     * @throws SNAuthException
+     */
+    public SNClient getClientForAuthenticatedUser(User user) throws SNAuthException {
+        SNClient cli = new SNClient(
+                snApiUrl,
+                user
+        );
+        try {
+            cli.checkAuth();
+        } catch (SNAuthException e) {
+            System.out.println("AUTH: " + e.getAuthError() + ", " + e.getMessage());
+            if (e.getAuthError() == AuthError.Type.INVALID_TOKEN) {
+                try {
+                    refreshToken(user);
+                } catch (SNException refreshEx) {
+                    throw new SNAuthException(refreshEx.getMessage(), refreshEx) {};
+                }
+            }
+        } catch (SNException e) {
+            throw new SNAuthException(e.getMessage(), e);
+        }
+        return cli;
+    }
+
+    /**
+     * Create new user in SignNow account
+     * @param email
+     * @param password
+     * @return user ID
+     * @throws SNAuthException
+     */
+    public String createUser(String email, String password) throws SNAuthException {
+        try {
+            Response response = snApiUrl.path("/user")
+                    .request(MediaType.APPLICATION_JSON)
+                    .header(Constants.AUTHORIZATION, basicAuthHeader)
+                    .post(Entity.entity(new User.UserCreateRequest(email, password), defaultVariant));
+            if (response.getStatus() >= 400) {
+                throw new SNAuthException(response.readEntity(Errors.class).errors.get(0).message);
+            } else {
+                return response.readEntity(User.UserCreateResponce.class).id;
+            }
+        } catch (SNAuthException e) {
+            throw e;
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new SNAuthException(e.getMessage(), e);
+        }
+    }
+
+}
+```
+
+SignNowService：
+
+```java
+@Component
+public class SNApiService {
+
+    private static final Logger logger = LoggerFactory.getLogger(SNApiService.class);
+
+    @Autowired
+    private SignNowConfig signNowConfig;
+
+    @PostConstruct
+    private void initClientBuilder() {
+        logger.info("初始化电子签.....");
+        SNClientBuilder.get(signNowConfig.getApiUrl(), signNowConfig.getClientId(), signNowConfig.getClientSecret());
+    }
+
+    public SNClient getSNClient(String email, String password) {
+        try {
+            return SNClientBuilder.get().getClientForExistingUser(email, password);
+        } catch (SNException e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    public SNClient getSNClient(User snUser) {
+        try {
+            return SNClientBuilder.get().getClientForAuthenticatedUser(snUser);
+        } catch (SNException e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
+
+
+    public void createNewSNUser(String email, String password) {
+        try {
+            SNClientBuilder.get().createUser(email, password);
+        } catch (SNException e) {
+            logger.error(e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
+    }
+}
+```
+
+UserData:
+
+```java
+@Component
+public class UserData {
+    private SNClient snClient;
+    private Set<DocumentInfo> userDocuments = new HashSet<>();
+
+    public SNClient getSnClient() {
+        return snClient;
+    }
+
+    public void setSnClient(SNClient snClient) {
+        this.snClient = snClient;
+    }
+
+    public Set<DocumentInfo> getUserDocuments() {
+        return Collections.unmodifiableSet(userDocuments);
+    }
+
+    public void setUserDocuments(Set<DocumentInfo> documents) {
+        userDocuments.addAll(documents);
+    }
+
+    public void addDocument(DocumentInfo document) {
+        this.userDocuments.add(document);
+    }
+}
+```
+
+ok，回到业务本身，当需要触发电子签的时候，首先从template中创建文档。
+
+```java
+public class SignNowServiceImpl implements SignNowService {
+
+    @Autowired
+    private SNApiService snApiService;
+
+    @Autowired
+    private Provider<UserData> provider;
+
+    @Autowired
+    private SignNowConfig signNowConfig;
+    
+	//signNow开发者账号
+    private static final String LOGIN_EMAIL = "XXXXXX@XXX.COM";
+    //signNow开发者账号的密码
+    private static final String LOGIN_PWD = "XXXXXX";
+
+    private static final Logger logger = LoggerFactory.getLogger(SignNowServiceImpl.class);
+
+    @Override
+    public void login() {
+        logger.info("登录signNow.....");
+        final UserData userData = provider.get();
+        userData.setSnClient(snApiService.getSNClient(LOGIN_EMAIL,LOGIN_PWD));
+        userData.setUserDocuments(getDocumentList());
+    }
+    
+    /**
+    * 从模板中创建文档，这边的templateId可以从各种方式获得。根据业务判断。
+    * @return 返回的是创建后的文档id
+    */
+    @Override
+    public String createDocumentFromTemplate(String templateId,String documentName) throws SNException {
+        if (isUserNotAuthorized()){
+            login();
+        }
+        logger.info("====从模板创建文档====");
+        return provider.get().getSnClient().templatesService().createDocumentFromTemplate(templateId,documentName);
+    }
+    
+    /**
+     * 登录态是否有效
+     * @return
+     */
+    private boolean isUserNotAuthorized() {
+        if (provider.get() == null) {
+            return true;
+        }
+        return provider.get().getSnClient() == null;
+    }
+    
+    /**
+     * 获得用户文档列表
+     * @return
+     * @throws SNException
+     */
+    private Set<DocumentInfo> getDocumentList() {
+        try {
+            return provider.get()
+                    .getSnClient()
+                    .documentsService()
+                    .getDocuments()
+                    .stream()
+                    .map(doc -> new DocumentInfo(doc.id, doc.document_name))
+                    .collect(Collectors.toSet());
+        } catch (SNException e) {
+            e.printStackTrace();
+        }
+        return new HashSet<>();
+    }
+    
+    //略..
+    
+}
+```
+
+**补充用到的类：**
+
+ApiSerivce：
+
+```java
+public abstract class ApiService {
+    protected SNClient client;
+
+    protected ApiService(SNClient client) {
+        this.client = client;
+    }
+}
+```
+
+Template服务：
+
+```java
+public interface Templates {
+    String createTemplate(String sourceDocumentId, String templateName) throws SNException;
+
+    String createDocumentFromTemplate(String sourceTemplateId, String newDocumentName) throws SNException;
+}
+```
+
+Template服务实现：
+
+```java
+public class TemplatesService extends ApiService implements Templates {
+    public TemplatesService(SNClient client) {
+        super(client);
+    }
+
+    public String createTemplate(String sourceDocumentId, String templateName) throws SNException {
+        return client.post(
+                "/template",
+                null,
+                new Template.CreateRequest(templateName, sourceDocumentId),
+                GenericId.class
+        ).id;
+    }
+
+    public String createDocumentFromTemplate(String sourceTemplateId, String newDocumentName) throws SNException {
+        return client.post(
+                "/template/{sourceTemplateId}/copy",
+                Collections.singletonMap("sourceTemplateId", sourceTemplateId),
+                new Template.CopyRequest(newDocumentName),
+                GenericId.class
+        ).id;
+    }
+}
+```
+
+
+
+通过上面的代码可以通过template创建出文档，接下来是可选项，回填文档的预填字段。
+
+### 回填文档内容
+
+一种是普通field，一种是smartFields。区别在于，smartFields可以有一些选项框可以设置，传入true即为选中。但是效果不明显，并且字段key不能重复。读者可以自己做两个demo尝试一下效果。
+
+```java
+@Override
+public void preFillFieldsOfDocument(String documentId, List<Field> fieldList) throws SNException{
+    if (StringUtils.isEmpty(fieldList)){
+        return;
+    }
+    if (isUserNotAuthorized()){
+        login();
+    }
+    Map<String,List<Field>> params = new HashMap<>();
+    params.put("fields",fieldList);
+    provider.get().getSnClient().put("/v2/documents/{document_id}/prefill-texts",Collections.singletonMap("document_id", documentId),params,String.class);
+}
+
+@Override
+public void preFillSmartFieldsOfDocument(String documentId, List<Map<String,String>> data) throws SNException{
+    if (StringUtils.isEmpty(data)){
+        return;
+    }
+    if (isUserNotAuthorized()){
+        login();
+    }
+    Map<String,Object> params = new HashMap<>();
+    params.put("data",data);
+    params.put("client_timestamp", DateUtils.getNowDate().getTime());
+    provider.get().getSnClient().post("/document/{document_id}/integration/object/smartfields",Collections.singletonMap("document_id", documentId),params,String.class);
+}
+```
+
+Field对象：
+
+```java
+public class Field {
+
+    private String field_name;
+
+    private String prefilled_text;
+
+    public Field(String field_name, Object prefilled_text) {
+        if (null != prefilled_text){
+            this.prefilled_text = String.valueOf(prefilled_text);
+        }else {
+            this.prefilled_text = "";
+        }
+        this.field_name = field_name;
+    }
+}
+```
+
+
+
+
+
+## 邀请用户签约
+
+这里入参的角色需要和平台内文档设置的角色对应，role内包含了签约人的邮箱，这一步将会有signNow发送给对方一封签约邮件。
+
+```java
+/**
+ * 
+ * @param documentId 文档ID
+ * @param inviteRoles 邀请的角色
+ * @param subject 文档标题、邮件标题
+ * @throws SNException
+*/
+@Override
+@Async
+public void inviteToSignDocument(String documentId, List<Document.InviteRole> inviteRoles,String subject) throws SNException {
+    if (isUserNotAuthorized()){
+        login();
+    }
+    Document.SigningInviteWithRolesRequest rolesRequest = new Document.SigningInviteWithRolesRequest(LOGIN_EMAIL,inviteRoles);
+    rolesRequest.message = "xxx";
+    rolesRequest.subject = subject;
+    provider.get().getSnClient().documentsService().sendDocumentSignInvite(documentId,rolesRequest);
+}
+```
+
+Doucment对象：(btw 如果文中有漏这些对象，可以从官方的github demo中找到。)
+
+```java
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class Document extends GenericId {
+    @JsonProperty("user_id")
+    public String user_id;
+    @JsonProperty("document_name")
+    public String document_name;
+    @JsonProperty("page_count")
+    public String pageCount;
+    public String created;
+    public String updated;
+    @JsonProperty("original_filename")
+    public String originalFilename;
+    @JsonProperty("version_time")
+    public String versionTime;
+    /**
+     * This one stands for some internal data info, does not correspond to document sign ID (free form invite) or group invite ID
+     */
+    @JsonProperty("field_invites")
+    public List<FieldInvite> fieldInvites;
+    /**
+     * Free form invites info
+     */
+    public List<DocumentSignRequestInfo> requests;
+
+    public static class SigningLinkRequest {
+        @JsonProperty("document_id")
+        public String documentId;
+
+        public SigningLinkRequest(String documentId) {
+            this.documentId = documentId;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SigningLinkResponce {
+        public String url;
+        @JsonProperty("url_no_signup")
+        public String urlNoSignup;
+    }
+
+    public static class SigningInviteRequest {
+        public final String from;
+        public final String to;
+        public List<String> cc = new ArrayList<>();
+        public String subject;
+        public String message;
+
+        public SigningInviteRequest(String from, String to) {
+            this.from = from;
+            this.to = to;
+        }
+    }
+
+    public static class SigningInviteWithRolesRequest {
+        public final String from;
+        public final List<InviteRole> to;
+        public List<String> cc = new ArrayList<>();
+        public String subject;
+        public String message;
+
+        public SigningInviteWithRolesRequest(String from, List<InviteRole> to) {
+            this.from = from;
+            this.to = to;
+        }
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class InviteRole {
+        public final String email;
+        public final String role_id;
+        public final String role;
+        public Integer order = 1;
+        public String password;
+        @JsonProperty("expiration_days")
+        public Integer expireAfterDays = null;
+        @JsonProperty("reminder")
+        public Integer remindAfterDays = null;
+        @JsonProperty("redirect_uri")
+        public String redirectUri = "";
+
+        public InviteRole(String email, String role,String roleId) {
+            this.email = email;
+            this.role = role;
+            this.role_id = roleId;
+        }
+
+        @JsonGetter("authentication_type")
+        public String getAuthType() {
+            if (password != null) {
+                return "password";
+            }
+            return null;
+        }
+    }
+
+    public enum FieldType {
+        SIGNATURE("signature"),
+        TEXT("text"),
+        INITIALS("initials"),
+        CHECKBOX("checkbox"),
+        ENUMERATION("enumeration");
+
+        private final String name;
+
+        FieldType(String name) {
+            this.name = name;
+        }
+
+        @JsonSetter
+        public static FieldType typeOf(String name) {
+            for (FieldType type : values()) {
+                if (type.name.equalsIgnoreCase(name)) {
+                    return type;
+                }
+            }
+            throw new IllegalArgumentException(name + " field not supported.");
+        }
+
+        @JsonCreator
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    public static class FieldsUpdateRequest {
+        public final List<Field> fields;
+
+        public FieldsUpdateRequest(List<Field> fields) {
+            this.fields = fields;
+        }
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class Field {
+        public int x;
+        public int y;
+        public int width;
+        public int height;
+        @JsonProperty("page_number")
+        public int pageNumber;
+        public String role;
+        public boolean required;
+        public FieldType type;
+        public String label;
+        @JsonProperty("prefilled_text")
+        public String prefilledText;
+
+        public String getType() {
+            return type.toString();
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FieldInvite extends GenericId {
+        public String status;
+        public String email;
+        public String role;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class DocumentSignRequestInfo extends GenericId {
+        @JsonProperty("signer_email")
+        public String signerEmail;
+        @JsonProperty("originator_email")
+        public String originatorEmail;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class DocumentDownloadLink {
+        public String link;
+    }
+
+}
+```
+
+```java
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class GenericId {
+    public String id;
+
+    @JsonIgnore
+    private Map<String, String> additionalMembers = new HashMap<>();
+
+    @JsonAnySetter
+    public void ignored(String name, Object value) {
+        if (value != null) {
+            additionalMembers.put(name, value.toString());
+        } else {
+            additionalMembers.put(name, null);
+        }
+    }
+
+    /**
+     * For debug purposes, contains API response object additional information that is not supported via DTO.
+     *
+     * @return
+     */
+    public Map<String, String> getAdditionalMembers() {
+        return Collections.unmodifiableMap(additionalMembers);
+    }
+}
+```
+
+## 创建事件、删除事件
+
+```java
+/**
+ * 为文档创建一个完成签约的事件
+ */
+@Override
+public void createEvent(String documentId) throws SNException{
+    if (isUserNotAuthorized()){
+        login();
+    }
+    Event event = new Event("document.complete");
+    event.setEntity_id(documentId);
+    //这里设置回调地址
+    event.setAttributes(new EventAttributes(signNowConfig.getCallBackUrl()));
+    provider.get().getSnClient().post("/api/v2/events",null,event,String.class);
+}
+
+//获取现在已经设置了的事件
+@Override
+public List<SignEventVo> getEventList() throws SNException, IOException {
+    if (isUserNotAuthorized()){
+        login();
+    }
+    OkHttpClient client = new OkHttpClient();
+    Request request = new Request.Builder()
+        .url(signNowConfig.getApiUrl() + "/api/v2/events")
+        .get()
+        .addHeader("Content-Type", "application/json")
+        .addHeader("Authorization", "Basic " + signNowConfig.getBasicToken())
+        .build();
+    Response response = client.newCall(request).execute();
+    if (response.isSuccessful()) {
+        if (StringUtils.isNotNull(response.body())) {
+            String result =  response.body().source().readUtf8();
+            response.close();
+            List<SignEventVo> data = JSONArray.parseArray(JSONObject.parseObject(result).get("data").toString(),SignEventVo.class);
+            return data;
+        }
+    }
+    return null;
+}
+
+//删除事件
+@Override
+public String deleteEvent(String documentId) throws SNException, IOException {
+    if (isUserNotAuthorized()){
+        login();
+    }
+    List<SignEventVo> signEventVos = getEventList();
+    if (StringUtils.isNotEmpty(signEventVos)){
+        //如果不为空，遍历获得ID
+        String deleteId = StringUtils.EMPTY;
+        for (SignEventVo signEventVo : signEventVos) {
+            if (signEventVo.getEntity_unique_id().equals(documentId)){
+                deleteId = signEventVo.getId();
+                break;
+            }
+        }
+        OkHttpClient client = new OkHttpClient();
+        Request request = new Request.Builder()
+            .url(signNowConfig.getApiUrl() + "/api/v2/events/" + deleteId)
+            .delete(null)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Authorization", "Basic " + signNowConfig.getBasicToken())
+            .build();
+        Response response = client.newCall(request).execute();
+        if (response.isSuccessful()) {
+            if (StringUtils.isNotNull(response.body())) {
+                String result =  response.body().source().readUtf8();
+                response.close();
+                return result;
+            }
+        }
+        return StringUtils.EMPTY;
+    }else {
+        return StringUtils.EMPTY;
+    }
+}
+```
+
+当这个文档双方都签约完成了，会发送回调。回调内包含了documentId，根据documentId标记业务完成。
+
+
+
+
+
+
+
+# 3.总结
+
+整体来说signNow的流程就是这般，可以按需使用。基本包含了创建文档、发送邀请链接、获取事件回调的流程，能够满足基本业务使用。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
