@@ -10,7 +10,7 @@ tags:
     - Java
     - langchain4j
     - AI
-    -Milvus
+    - Milvus
 
 ---
 
