@@ -41,7 +41,7 @@ ZhipuAiChatModel chatModel = ZhipuAiChatModel.builder()
 >
 > 原文链接：https://blog.csdn.net/thujiang000/article/details/122786518
 
-按我的理解来说，他是一种更智能的检索，比如，把文本向量化后，运动、篮球、足球会有关联关系，而一般的拆分词检索是无法建立这样的关系的，比如elasticsearch中，检索运动关键字是给不出篮球、足球的信息的。但在向量数据库（embedding store）中，这是可行的，所以Embedding本身看起来就挺智能和聪明的了，这在很多推荐场景都使用到过，机器学习之类的也是必修的内容。
+按我的理解来说，他是一种更智能的检索，比如，把文本向量化后，运动、篮球、足球会有关联关系，而一般的拆分词检索是无法建立这样的关系的，比如elasticsearch中，检索运动关键字是给不出篮球、足球的信息的。但在向量数据库（embedding store）中，这是可行的，所以Embedding本身看起来就挺智能了，这在很多推荐场景都使用到过，机器学习之类的也是必修的内容。
 
 再拓展一点，有一些简单的人脸识别，也可以通过向量化来做，把图片信息通过embedding后，通过向量查询，可以查询到相似度较高的图片信息。当然想要人脸识别还没这么简单， 这里不展开说了。
 
@@ -50,6 +50,34 @@ ZhipuAiChatModel chatModel = ZhipuAiChatModel.builder()
 # Embedding Store
 
 向量存储，顾名思义，存储向量信息的地方，我这里选择milvus作为向量存储来使用，其实很多非关系型数据库也可以作为向量存储，例如elasticsearch，redis之类的。milvus是一个开源的向量数据库，既然是向量存储，还是选择向量数据库吧。同时，langchain4j也提供了mlivus相关的工具，使用起来比较方便。
+
+安装依赖，这里比上一篇多了几个依赖。
+
+```xml
+<dependency>
+    <groupId>dev.langchain4j</groupId>
+    <artifactId>langchain4j-spring-boot-starter</artifactId>
+    <version>${langchain4j.version}</version>
+</dependency>
+
+<dependency>
+    <groupId>dev.langchain4j</groupId>
+    <artifactId>langchain4j-zhipu-ai</artifactId>
+    <version>${langchain4j.version}</version>
+</dependency>
+
+<dependency>
+    <groupId>dev.langchain4j</groupId>
+    <artifactId>langchain4j-embeddings-all-minilm-l6-v2</artifactId>
+    <version>${langchain4j.version}</version>
+</dependency>
+
+<dependency>
+    <groupId>dev.langchain4j</groupId>
+    <artifactId>langchain4j-milvus</artifactId>
+    <version>${langchain4j.version}</version>
+</dependency>
+```
 
 示例代码：
 
