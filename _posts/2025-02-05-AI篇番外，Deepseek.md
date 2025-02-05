@@ -10,9 +10,9 @@ tags:
     - Java
     - langchain4j
     - AI
-    -DeepSeek
-
+    - DeepSeek
 ---
+
 
 ​		各位读者新年好呀，deepSeek在春节假期着实是火了一把，低成本和高性能让对岸的许多公司破防了。那么既然有这么好用的LLM，我们Javaer应该如何来使用呢？
 
