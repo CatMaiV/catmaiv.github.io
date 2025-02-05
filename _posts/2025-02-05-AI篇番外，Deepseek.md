@@ -1,7 +1,7 @@
 ---
 layout:     post
 title:     DeepSeek+langchain4j的使用
-subtitle:   通过langchain4j接入deepSeek
+subtitle:   通过langchain4j接入deepSeek，Java开发AI应用像呼吸一样简单。
 date:       2025-02-05
 author:     catmai
 header-img: img/post-bg-re-vs-ng2.jpg
