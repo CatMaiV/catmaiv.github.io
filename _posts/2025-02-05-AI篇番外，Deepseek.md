@@ -103,7 +103,7 @@ public class DeepSeekConfig {
 ``` yaml
 # langchain4j配置
 langchain:
-    deepseek:
+    deepSeek:
         apiKey: xxxxx
         baseUrl: https://api.deepseek.com
         modelName: deepseek-chat
