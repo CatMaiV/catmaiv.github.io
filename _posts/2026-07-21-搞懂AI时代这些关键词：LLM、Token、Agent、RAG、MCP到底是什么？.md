@@ -462,7 +462,7 @@ RAG 使得大模型能够胜任许多专业性强、需要最新资讯的工作�
 
 需要注意的是，很多人认为：做RAG就是接一个向量数据库。实际上，目前一个高质量RAG系统涉及很多环节：
 
-![](https://raw.githubusercontent.com/CatMaiV/BlogImage/main/img/2026/1784690241292-ab04d75f-1b7d-47b8-94e0-3783133713e8.jpeg)
+![](https://raw.githubusercontent.com/CatMaiV/BlogImage/main/img/2026/rag_flow.jpg)
 
 
 
